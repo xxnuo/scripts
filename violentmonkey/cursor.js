@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Cursor Token获取器
+// @name         Cursor Token获取器-v2
 // @namespace    http://tampermonkey.net/
-// @version      2.0
-// @description  使用GM_xmlhttpRequest获取Cursor会话token
+// @version      2.1
+// @description  使用GM_xmlhttpRequest获取Cursor会话token（自动获取Cookie）
 // @author       You
 // @match        https://www.cursor.com/*
 // @match        https://cursor.com/*
@@ -15,6 +15,13 @@
 
 (function () {
     'use strict';
+
+    // 获取 cookie 中指定键值
+    function getCookieValue(name) {
+        const match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
+        if (match) return match[2];
+        return null;
+    }
 
     // 生成 PKCE 验证对
     function generatePKCEPair () {
@@ -51,7 +58,7 @@
         document.cookie = `${name}=${value}; path=/; domain=.cursor.com`;
     }
 
-    // 使用 GM_xmlhttpRequest 发起请求
+    // 发起 GM 请求
     function makeGMRequest (url) {
         return new Promise ((resolve, reject) => {
             GM_xmlhttpRequest ({
@@ -66,7 +73,6 @@
                 },
                 timeout: 10000,
                 onload: function (response) {
-                    console.log ('GM 请求成功:', response.status, response.responseText);
                     if (response.status === 200) {
                         try {
                             const data = JSON.parse (response.responseText);
@@ -79,7 +85,6 @@
                     }
                 },
                 onerror: function (error) {
-                    console.error ('GM 请求失败:', error);
                     reject (new Error (' 网络请求失败 '));
                 },
                 ontimeout: function () {
@@ -92,38 +97,25 @@
     // 轮询认证状态
     async function pollAuthStatus (uuid, verifier, maxAttempts = 20) {
         let attempts = 0;
-
         while (attempts < maxAttempts) {
             try {
                 const authPollUrl = `https://api2.cursor.sh/auth/poll?uuid=${uuid}&verifier=${verifier}`;
-                console.log (`轮询尝试 ${attempts + 1}/${maxAttempts}: ${authPollUrl}`);
-
                 const data = await makeGMRequest (authPollUrl);
-                console.log ('API 响应:', data);
-
                 const accessToken = data.accessToken;
                 const authId = data.authId || "";
-
                 if (accessToken) {
                     let userId = "";
                     if (authId.includes ("|")) {
                         userId = authId.split ("|")[1];
                     }
-
-                    console.log ("成功获取账号 token 和 userId");
                     return { userId, accessToken };
                 }
-
-                // 如果没有获取到 token，等待后重试
                 attempts++;
                 if (attempts < maxAttempts) {
                     await new Promise (resolve => setTimeout (resolve, 3000));
                 }
-
             } catch (error) {
-                console.error (`轮询尝试 ${attempts + 1} 失败:`, error);
                 attempts++;
-
                 if (attempts < maxAttempts) {
                     await new Promise (resolve => setTimeout (resolve, 3000));
                 } else {
@@ -131,49 +123,29 @@
                 }
             }
         }
-
-        throw new Error (' 轮询超时，请确保已点击登录按钮 ');
+        throw new Error ('轮询超时，请确保已点击登录按钮');
     }
 
-    // 获取 Cursor 会话 token
+    // 获取 Cursor Session Token
     async function getCursorSessionToken (sessionToken) {
-        console.log ("开始获取会话令牌");
-
-        try {
-            // 设置 session token cookie
-            if (sessionToken) {
-                setCookie ("WorkosCursorSessionToken", sessionToken);
-                console.log ("已设置 WorkosCursorSessionToken cookie");
-            }
-
-            const { codeVerifier, codeChallenge } = await generatePKCEPair ();
-            const uuid = generateUUID ();
-            const clientLoginUrl = `https://www.cursor.com/cn/loginDeepControl?challenge=${codeChallenge}&uuid=${uuid}&mode=login`;
-
-            console.log (`生成的 UUID: ${uuid}`);
-            console.log (`生成的 verifier: ${codeVerifier}`);
-            console.log (`访问深度登录 URL: ${clientLoginUrl}`);
-
-            // 在新标签页中打开登录 URL
-            window.open (clientLoginUrl, '_blank');
-
-            return { uuid, codeVerifier, clientLoginUrl };
-
-        } catch (error) {
-            console.error ("初始化失败:", error);
-            throw error;
+        if (sessionToken) {
+            setCookie ("WorkosCursorSessionToken", sessionToken);
         }
+        const { codeVerifier, codeChallenge } = await generatePKCEPair ();
+        const uuid = generateUUID ();
+        const clientLoginUrl = `https://www.cursor.com/cn/loginDeepControl?challenge=${codeChallenge}&uuid=${uuid}&mode=login`;
+        window.open (clientLoginUrl, '_blank');
+        return { uuid, codeVerifier, clientLoginUrl };
     }
 
     // 创建悬浮框 UI
     function createFloatingUI () {
-        if (document.getElementById ('cursor-token-floater')) {
-            return;
-        }
+        if (document.getElementById ('cursor-token-floater')) return;
 
         const floater = document.createElement ('div');
         floater.id = 'cursor-token-floater';
-        floater.innerHTML = `
+
+                floater.innerHTML = `
             <div style="
                 position: fixed;
                 top: 20px;
@@ -280,20 +252,20 @@
 
         document.body.appendChild (floater);
 
-        // 从存储中恢复 session token
-        const savedToken = GM_getValue ('cursor_session_token', '');
-        if (savedToken) {
-            document.getElementById ('session-token-input').value = savedToken;
+        // 自动获取 session token
+        let sessionToken = getCookieValue("WorkosCursorSessionToken");
+        if (!sessionToken) {
+            sessionToken = GM_getValue('cursor_session_token', '');
+        }
+
+        if (sessionToken) {
+            document.getElementById('session-token-input').value = sessionToken;
         }
 
         let authInfo = null;
 
-        // 绑定事件
-        document.getElementById ('close-floater').onclick = () => {
-            floater.remove ();
-        };
+        document.getElementById ('close-floater').onclick = () => floater.remove ();
 
-        // 开始认证按钮
         document.getElementById ('start-auth-btn').onclick = async () => {
             const sessionToken = document.getElementById ('session-token-input').value.trim ();
             const resultArea = document.getElementById ('result-area');
@@ -307,7 +279,6 @@
             }
 
             GM_setValue ('cursor_session_token', sessionToken);
-
             startBtn.textContent = ' 初始化中...';
             startBtn.disabled = true;
             resultArea.style.color = '#000';
@@ -315,24 +286,10 @@
 
             try {
                 authInfo = await getCursorSessionToken (sessionToken);
-
-                resultArea.innerHTML = `<div style="color: #28a745; font-weight: bold; margin-bottom: 10px;">✅ 认证流程已启动！</div>
-
-<div style="color: #000; margin-bottom: 8px;"><strong>UUID:</strong> ${authInfo.uuid}</div>
-<div style="color: #000; margin-bottom: 8px;"><strong > 登录页面已打开 </strong></div>
-
-<div style="color: #007bff; font-weight: bold; margin: 15px 0;">
-📌 请在新打开的页面中点击 "Yes, Log In" 按钮
-</div>
-
-<div style="color: #666; font-size: 12px;">
-点击登录后，使用下方 "获取 Token" 按钮开始自动轮询获取结果
-</div>`;
-
+                resultArea.innerHTML = `✅ 认证流程已启动！ 请点击新窗口中的 "Yes, Log In"，然后返回点击 "获取 Token"`;
                 pollBtn.style.display = 'block';
                 startBtn.textContent = '🚀 开始认证 ';
                 startBtn.disabled = false;
-
             } catch (error) {
                 resultArea.style.color = '#dc3545';
                 resultArea.textContent = `❌ 初始化失败: ${error.message}`;
@@ -341,7 +298,6 @@
             }
         };
 
-        // 获取 Token 按钮
         document.getElementById ('poll-token-btn').onclick = async () => {
             if (!authInfo) {
                 document.getElementById ('result-area').textContent = '❌ 请先点击 "开始认证"';
@@ -354,48 +310,26 @@
             pollBtn.textContent = ' 轮询中...';
             pollBtn.disabled = true;
             resultArea.style.color = '#000';
-            resultArea.textContent = ' 正在轮询获取 Token，请稍候...\n\n 确保已在登录页面点击了 "Yes, Log In" 按钮 ';
+            resultArea.textContent = ' 正在轮询获取 Token，请稍候...\n\n 确保已点击登录';
 
             try {
                 const result = await pollAuthStatus (authInfo.uuid, authInfo.codeVerifier);
+                resultArea.innerHTML = `<strong>User ID:</strong> ${result.userId}<br><br><strong>Access Token:</strong><br>${result.accessToken}`;
 
-                resultArea.innerHTML = `<div style="color: #28a745; font-weight: bold; margin-bottom: 15px;">🎉 Token 获取成功！</div>
-
-<div style="color: #000; margin-bottom: 8px;"><strong>User ID:</strong></div>
-<div style="background: #fff; border: 1px solid #ddd; padding: 8px; border-radius: 4px; margin-bottom: 12px; word-break: break-all; color: #000;">${result.userId}</div>
-
-<div style="color: #000; margin-bottom: 8px;"><strong>Access Token:</strong></div>
-<div style="background: #fff; border: 1px solid #ddd; padding: 8px; border-radius: 4px; margin-bottom: 15px; word-break: break-all; color: #000;">${result.accessToken}</div>`;
-
-                // 添加复制按钮
                 const copyBtn = document.createElement ('button');
                 copyBtn.textContent = '📋 复制 Access Token';
-                copyBtn.style.cssText = `
-                    width: 100%;
-                    padding: 10px;
-                    background: #17a2b8;
-                    color: white;
-                    border: none;
-                    border-radius: 6px;
-                    cursor: pointer;
-                    font-size: 14px;
-                    font-weight: bold;
-                    margin-top: 10px;
-                `;
+                copyBtn.style.cssText = `margin-top: 10px; padding: 10px; background: #17a2b8; color: white; border: none; border-radius: 6px; cursor: pointer;`;
                 copyBtn.onclick = () => {
                     navigator.clipboard.writeText (result.accessToken).then (() => {
-                        copyBtn.textContent = '✅ 已复制到剪贴板！';
-                        setTimeout (() => {
-                            copyBtn.textContent = '📋 复制 Access Token';
-                        }, 3000);
+                        copyBtn.textContent = '✅ 已复制！';
+                        setTimeout (() => copyBtn.textContent = '📋 复制 Access Token', 3000);
                     });
                 };
 
                 resultArea.parentNode.appendChild (copyBtn);
-
             } catch (error) {
                 resultArea.style.color = '#dc3545';
-                resultArea.textContent = `❌ 获取 Token 失败: ${error.message}\n\n 请确保：\n1. 已在登录页面点击"Yes, Log In"\n2. 网络连接正常 \n3. Session Token 有效`;
+                resultArea.textContent = `❌ 获取失败: ${error.message}`;
             } finally {
                 pollBtn.textContent = '🎯 获取 Token';
                 pollBtn.disabled = false;
@@ -403,7 +337,7 @@
         };
     }
 
-    // 页面加载完成后创建 UI
+    // 页面加载完创建 UI
     if (document.readyState === 'loading') {
         document.addEventListener ('DOMContentLoaded', createFloatingUI);
     } else {
