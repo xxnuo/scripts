@@ -53,10 +53,6 @@
         });
     }
 
-    // 设置 Cookie
-    function setCookie (name, value) {
-        document.cookie = `${name}=${value}; path=/; domain=.cursor.com`;
-    }
 
     // 发起 GM 请求
     function makeGMRequest (url) {
@@ -128,9 +124,7 @@
 
     // 获取 Cursor Session Token
     async function getCursorSessionToken (sessionToken) {
-        if (sessionToken) {
-            setCookie ("WorkosCursorSessionToken", sessionToken);
-        }
+       
         const { codeVerifier, codeChallenge } = await generatePKCEPair ();
         const uuid = generateUUID ();
         const clientLoginUrl = `https://www.cursor.com/cn/loginDeepControl?challenge=${codeChallenge}&uuid=${uuid}&mode=login`;
