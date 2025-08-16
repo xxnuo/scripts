@@ -3,6 +3,8 @@
 // @namespace    http://tampermonkey.net/
 // @version      2.1
 // @description  使用GM_xmlhttpRequest获取Cursor会话token（自动获取Cookie）
+// @updateURL    https://raw.githubusercontent.com/xxnuo/scripts/refs/heads/main/violentmonkey/cursor.js
+// @downloadURL  https://raw.githubusercontent.com/xxnuo/scripts/refs/heads/main/violentmonkey/cursor.js
 // @author       You
 // @match        https://www.cursor.com/*
 // @match        https://cursor.com/*
